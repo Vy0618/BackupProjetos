@@ -12,7 +12,7 @@ Funcionamento do motor:
 */
 
 
-// ========== CONFIGURAÇÕES ==========
+
 const int trigPin = 11;
 const int echoPin = 10;
 const int ESC1_PIN = 9;   // Motor esquerdo (rotação)
@@ -32,7 +32,7 @@ const int VEL_GIRO = 50;
 Servo escEsquerdo;
 Servo escDireito;
 
-// ========== SENSOR ==========
+
 float lerDistancia() {
     digitalWrite(trigPin, LOW);
     delayMicroseconds(4);
@@ -82,7 +82,7 @@ void parar() {
     escDireito.write(0);
 }
 
-// ========== COMPORTAMENTOS ==========
+
 void aproximarEColetar() {
     Serial.println("Aproximando...");
     avancar(VEL_AVANCO);
@@ -148,7 +148,7 @@ bool girarProcurar() {
     return false;
 }
 
-// ========== INICIALIZAÇÃO ==========
+
 void inicializarESCs() {
     escEsquerdo.attach(ESC1_PIN, 1000, 2000);
     escDireito.attach(ESC2_PIN, 1000, 2000);
@@ -171,7 +171,7 @@ void setup() {
     Serial.println("----------------------------");
 }
 
-// ========== LOOP PRINCIPAL ==========
+
 void loop() {
     float dist = lerDistancia();
     exibirDistancia(dist);
