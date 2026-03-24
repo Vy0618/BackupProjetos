@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-///VErsão 3.0.
+/// Versão 3.1
 
 const int trigPin = 11;
 const int echoPin = 10;
@@ -9,14 +9,14 @@ const int motor1_Tras = 40;            // Pino para controlar Motor 1 (avanço)
 const int motor2_Frente = 41;          // pino de controle para motor 2
 const int motor2_Tras = 43;            // pino de controle para motor 2
 const int distancia_deteccao = 100;    // cm
-const int distancia_alvo = 7;          // cm (ajustado para 7, igual ao usado)
+const int distancia_alvo = 20;         // o sensor à prova d'água detecta objetos a partir de 20cm de distância
 const unsigned long tempo_giro = 5000; // ms
-const int tempo_coleta = 4000;         // ms
+const int tempo_coleta = 4000;         // 4s
 const int tempo_entreLoops = 500;      // ms
 const int distancia_minima = 2;        // cm
 const int distancia_maxima = 400;      // cm
-const int timeout_sensor = 30000;      // pulso de 5m
-const int timeout_aproximacao = 30000; // ms
+const int timeout_sensor = 30000;       
+const int timeout_aproximacao = 30000; // 30s para coletar o obj
 
 float lerDistancia()
 {
@@ -80,7 +80,7 @@ void desligarMotores()
 void avancarRapido()
 {
     ligarMotoresAvanco();
-    delay(2000);
+    delay(5000);
     desligarMotores();
     delay(500);
 }
@@ -104,29 +104,21 @@ void aproximarEColetar()
             continue; // tenta novamente
         }
 
-        Serial.print("Aproximando: ");
-        Serial.print(distancia);
-        Serial.println(" cm");
+        exibirDistancia(distancia);
+        
 
         if (millis() - tempoInicio > timeout_aproximacao)
         {
             Serial.println("Timeout na aproximação\n");
-
             desligarMotores();
             return;
         }
-
         delay(100);
 
     } while (distancia > distancia_alvo);
 
     desligarMotores();
-
-    Serial.print("Alvo alcançado a ");
-    Serial.print(distancia);
-    Serial.println(" cm");
-
-        delay(tempo_coleta);
+    delay(tempo_coleta);
 
     Serial.println("OBJETO COLETADO COM SUCESSO!");
 }
@@ -177,6 +169,9 @@ void setup()
     pinMode(motor1_Tras, OUTPUT);
     pinMode(motor2_Frente, OUTPUT);
     pinMode(motor2_Tras, OUTPUT);
+
+    Serial.begin(9600);
+    exibirInicializacao();
 }
 
 void exibirInicializacao()
@@ -201,26 +196,33 @@ void protocoloPrincipal()
 
     if (distancia < distancia_deteccao)
     {
-        Serial.prinln("OBJETO DETECTADO!");
+        Serial.println("OBJETO DETECTADO!");
         aproximarEColetar();
         Serial.println("Ciclo de coleta concluído.");
         delay(2000);
-    } else{
+    }
+
+    else
+    {
         Serial.println("Nenhum objeto encontrado. Iniciando varredura.");
 
         bool objetoEncontrado = girarProcurar();
 
-        if(objetoEncontrado){
+        if (objetoEncontrado)
+        {
             Serial.println("Objeto encontrado durante varredura");
             delay(500);
-        } else{
+        }
+        else
+        {
             Serial.println("Nenhum objeto encontrado. Nova varredura em 7 segundos.");
             delay(7000);
         }
     }
 }
 
-void loop(){
+void loop()
+{
     protocoloPrincipal();
     delay(tempo_entreLoops);
 }
