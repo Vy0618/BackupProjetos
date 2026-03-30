@@ -5,11 +5,11 @@
 const int trigPin = 11;
 const int echoPin = 10;
 
-const int motor1aPin = 42; // Pino para controlar Motor 1 (rotação)
-const int motor1bPin = 40; // Pino para controlar Motor 1 (avanço)
+const int motor1aPin = 5; // Pino para controlar Motor 1 (rotação)
+const int motor1bPin = 7; // Pino para controlar Motor 1 (avanço)
 
-const int motor2aPin = 41; //pino de controle para motor 2
-const int motor2bPin = 43; //pino de controle para motor 2
+const int motor2aPin = 6; //pino de controle para motor 2
+const int motor2bPin = 4; //pino de controle para motor 2
 
 const int detection_distance = 100;   // cm
 const int target_distance = 7;         // cm (ajustado para 7, igual ao usado)
