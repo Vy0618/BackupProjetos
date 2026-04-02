@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-/// Versão 3.1
+/// Versão 3.2
 
 const int trigPin = 11;
 const int echoPin = 10;
