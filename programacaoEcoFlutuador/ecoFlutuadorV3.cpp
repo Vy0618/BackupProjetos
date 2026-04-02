@@ -1,22 +1,25 @@
 #include <Arduino.h>
 
-/// Versão 3.1
+/// Versão 3.2
 
 const int trigPin = 11;
 const int echoPin = 10;
-const int motor1_Frente = 42;          // Pino para controlar Motor 1 (rotação)
-const int motor1_Tras = 40;            // Pino para controlar Motor 1 (avanço)
-const int motor2_Frente = 41;          // pino de controle para motor 2
-const int motor2_Tras = 43;            // pino de controle para motor 2
-const int distancia_deteccao = 100;    // cm
-const int distancia_alvo = 20;         // o sensor à prova d'água detecta objetos a partir de 20cm de distância
-const unsigned long tempo_giro = 5000; // ms
-const int tempo_coleta = 4000;         // 4s
-const int tempo_entreLoops = 500;      // ms
-const int distancia_minima = 2;        // cm
-const int distancia_maxima = 400;      // cm
-const int timeout_sensor = 30000;       
-const int timeout_aproximacao = 30000; // 30s para coletar o obj
+
+const int distancia_deteccao = 100;
+const int distancia_alvo = 30;
+const int distancia_minima = 2;
+const int distancia_maxima = 400;
+
+const int motor1_Frente = 40;
+const int motor1_Tras = 41;
+const int motor2_Frente = 42;
+const int motor2_Tras = 43;
+
+const unsigned long tempo_giro = 5000;
+const int tempo_coleta = 4000;
+const int timeout_aproximacao = 30000;
+
+const int tempo_entreLoops = 500;
 
 float lerDistancia()
 {
@@ -26,19 +29,13 @@ float lerDistancia()
     delayMicroseconds(12);
     digitalWrite(trigPin, LOW);
 
-    long duracao = pulseIn(echoPin, HIGH, timeout_sensor);
-
+    long duracao = pulseIn(echoPin, HIGH, 30000);
     if (duracao == 0)
-    {
         return -1;
-    }
 
     float distancia = (duracao * 0.034) / 2;
-
-    if (distancia < distancia_minima || distancia > distancia_maxima)
-    {
+    if (distancia < 2 || distancia > 400)
         return -1;
-    }
 
     return distancia;
 }
@@ -47,13 +44,13 @@ void exibirDistancia(float distancia)
 {
     if (distancia > 0)
     {
-        Serial.print("Distância atual: ");
+        Serial.print("Distância: ");
         Serial.print(distancia);
-        Serial.print(" cm");
+        Serial.println(" cm");
     }
     else
     {
-        Serial.print("Leitura Inválida");
+        Serial.println("Leitura inválida");
     }
 }
 
@@ -77,49 +74,54 @@ void desligarMotores()
     digitalWrite(motor2_Tras, LOW);
 }
 
-void avancarRapido()
-{
-    ligarMotoresAvanco();
-    delay(5000);
-    desligarMotores();
-    delay(500);
-}
 
 void aproximarEColetar()
 {
-    Serial.println("SE APROXIMANDO DO OBJETO\n");
-
+    Serial.println("Aproximando...\n");
     ligarMotoresAvanco();
-
+    
     float distancia;
     unsigned long tempoInicio = millis();
-
-    do
+    int contadorLeituras = 0;
+    
+    while (true)
     {
         distancia = lerDistancia();
-
+        
         if (distancia < 0)
         {
+            Serial.println("DEBUG: Leitura inválida, tentando novamente...");
             delay(50);
-            continue; // tenta novamente
+            continue;
         }
-
-        exibirDistancia(distancia);
         
-
+        contadorLeituras++;
+        
+        Serial.print("Leitura #");
+        Serial.print(contadorLeituras);
+        Serial.print(" - Dist: ");
+        Serial.print(distancia);
+        
+        if (distancia <= distancia_alvo) {
+            Serial.println("ALVO ATINGIDO!");
+            break;
+        } else {
+            Serial.println("continuando...");
+        }
+        
         if (millis() - tempoInicio > timeout_aproximacao)
         {
-            Serial.println("Timeout na aproximação\n");
+            Serial.println("DEBUG: Timeout atingido!");
             desligarMotores();
             return;
         }
+        
         delay(100);
-
-    } while (distancia > distancia_alvo);
-
+    }
+    
     desligarMotores();
+    Serial.println("Motores desligados");
     delay(tempo_coleta);
-
     Serial.println("OBJETO COLETADO COM SUCESSO!");
 }
 
@@ -127,7 +129,10 @@ bool girarProcurar()
 {
     Serial.println("Girando 360° procurando objetos...\n");
 
-    avancarRapido();
+    ligarMotoresAvanco();
+    delay(5000);
+    desligarMotores();
+    delay(200);
 
     ligarMotoresRotacao();
 
@@ -161,6 +166,14 @@ bool girarProcurar()
     return false;
 }
 
+void exibirInicializacao()
+{
+    Serial.println("=================================");
+    Serial.println("   ECOFLUTUADOR - SISTEMA PET   ");
+    Serial.println("=================================\n");
+    Serial.println("Sistema inicializado com sucesso!");
+}
+
 void setup()
 {
     pinMode(trigPin, OUTPUT);
@@ -172,14 +185,6 @@ void setup()
 
     Serial.begin(9600);
     exibirInicializacao();
-}
-
-void exibirInicializacao()
-{
-    Serial.println("=================================");
-    Serial.println("   ECOFLUTUADOR - SISTEMA PET   ");
-    Serial.println("=================================\n");
-    Serial.println("Sistema inicializado com sucesso!");
 }
 
 void protocoloPrincipal()
