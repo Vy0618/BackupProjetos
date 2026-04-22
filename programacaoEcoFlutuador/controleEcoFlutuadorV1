@@ -4,7 +4,7 @@
 #include <ESP32Servo.h>
 
 
-const char* ssid = "ESP32-Robo";
+const char* ssid = "ESP32-EcoFlutuador";
 const char* password = "12345678";
 
 WebServer server(80);
