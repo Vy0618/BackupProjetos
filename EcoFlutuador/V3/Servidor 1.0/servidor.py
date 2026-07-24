@@ -1,8 +1,10 @@
-from flask import Flask, Response, request
+from flask import Flask, Response, render_template, request
 import cv2
 import serial
 import threading
 import time
+
+# -------------------------------------------------------
 
 app = Flask(__name__)
 
@@ -16,6 +18,8 @@ potencia2 = 30
 # --- Modo automático ---
 modo_auto = False
 modo_lock = threading.Lock()
+
+# -------------------------------------------------------
 
 # Configuração do modelo de detecção (Código 2)
 classNames = []
@@ -35,6 +39,8 @@ net.setInputSwapRB(True)
 # Objetos-alvo que o modo automático perseguirá
 ALVOS = ['bottle']
 
+# -------------------------------------------------------
+
 def detectar(img, thres=0.45, nms=0.2):
     """Roda detecção e retorna (img_anotada, objectInfo)."""
     classIds, confs, bbox = net.detect(img, confThreshold=thres, nmsThreshold=nms)
@@ -52,6 +58,7 @@ def detectar(img, thres=0.45, nms=0.2):
                             (box[0] + 10, box[1] + 58),
                             cv2.FONT_HERSHEY_COMPLEX, 0.7, (0, 200, 0), 1)
     return img, objectInfo
+   
 
 def decidir_acao(objectInfo, largura_frame=320):
     """
@@ -76,6 +83,176 @@ def decidir_acao(objectInfo, largura_frame=320):
         return 'w'          # objeto no centro  → avança
 
 # -------------------------------------------------------
+
+class Camera:
+    def __init__(self):
+        self.cam = cv2.VideoCapture(0, cv2.CAP_V4L2)
+        self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+        self.cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+        self.cam.set(cv2.CAP_PROP_FPS, 10)
+        self.cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+        self.frame_raw  = None   # frame sem anotações (para detecção)
+        self.frame_jpeg = None   # frame codificado para stream
+        self.objectInfo = []
+
+        self.lock = threading.Lock()
+        threading.Thread(target=self._capturar, daemon=True).start()
+
+    def _capturar(self):
+        while True:
+            sucesso, frame = self.cam.read()
+            if sucesso:
+               
+                with modo_lock:
+                    auto = modo_auto
+
+                objectInfo = []
+
+                if auto:
+                    frame, objectInfo = detectar(frame)
+
+                _, buffer = cv2.imencode('.jpg', frame,
+                                        [cv2.IMWRITE_JPEG_QUALITY, 50])
+                with self.lock:
+                    self.frame_raw = frame.copy()
+                    self.objectInfo = objectInfo
+                    self.frame_jpeg = buffer.tobytes()
+            time.sleep(0.1)
+
+    def get_frame(self):
+        with self.lock:
+            return self.frame_jpeg
+
+    def get_raw(self):
+        with self.lock:
+            return self.frame_raw.copy() if self.frame_raw is not None else None
+
+    def get_objects(self):
+         with self.lock:
+             return list(self.objectInfo)
+
+# -------------------------------------------------------
+camera = Camera()
+# -------------------------------------------------------
+
+# Loop autônomo — roda em background quando modo_auto=True
+def loop_autonomo():
+    ultimo_cmd = None
+    while True:
+        with modo_lock:
+            auto = modo_auto
+        if auto:
+                objectInfo = camera.get_objects()
+                cmd = decidir_acao(objectInfo)
+                if cmd != ultimo_cmd:
+                    if cmd:
+                        try:
+                            ser.write((cmd + '\n').encode())
+                            registrar(f"[AUTO] Enviado: '{cmd}'")
+                        except Exception as e:
+                            registrar(f"[AUTO] ERRO serial: {e}")
+                    else:
+                        try:
+                            ser.write(('s\n').encode())
+                            registrar("[AUTO] Nenhum alvo — parando")
+                        except Exception:
+                            pass
+                    ultimo_cmd = cmd
+        else:
+            ultimo_cmd = None  # reseta ao sair do modo auto
+        time.sleep(0.15)
+
+threading.Thread(target=loop_autonomo, daemon=True).start()
+
+# -------------------------------------------------------
+
+def gerar_frames():
+    while True:
+        frame = camera.get_frame()
+        if frame:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' +
+                   frame + b'\r\n')
+        time.sleep(0.05)
+
+# -------------------------------------------------------
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/set_modo')
+def set_modo():
+    global modo_auto
+    val = request.args.get('auto', '0')
+    with modo_lock:
+        modo_auto = (val == '1')
+        estado = modo_auto
+    registrar(f"Modo alterado para: {'AUTOMÁTICO' if estado else 'MANUAL'}")
+    if not estado:
+        # Para os motores ao sair do modo automático
+        try:
+            ser.write(('s\n').encode())
+        except Exception:
+            pass
+    return {'modo_auto': estado}
+
+@app.route('/stream')
+def stream():
+    return Response(gerar_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+# -------------------------------------------------------
+
+@app.route('/move')
+def move():
+    with modo_lock:
+        auto = modo_auto
+    if auto:
+        return {'status': 'erro', 'msg': 'em modo automático'}, 403
+    cmd = request.args.get('cmd', '')
+    if cmd in ['w', 'a', 's', 'd', 'q', 'e']:
+        try:
+            ser.write((cmd + '\n').encode())
+            registrar(f"Enviado: '{cmd}'")
+            return {'status': 'enviado', 'cmd': cmd}
+        except Exception as e:
+            registrar(f"ERRO serial: {e}")
+            return {'status': 'erro', 'msg': str(e)}, 500
+    return {'status': 'erro', 'msg': 'comando inválido'}, 400
+
+# -------------------------------------------------------
+
+@app.route('/power')
+def power():
+    global potencia1, potencia2
+    try:
+        motor = int(request.args.get('motor', 0))
+        val   = int(request.args.get('val', 30))
+        val   = max(0, min(100, val))
+        if motor not in [1, 2]:
+            return {'status': 'erro', 'msg': 'motor inválido'}, 400
+        if motor == 1:
+            potencia1 = val
+        else:
+            potencia2 = val
+        msg = f"P{motor}{val:03d}\n"
+        ser.write(msg.encode())
+        registrar(f"M{motor} → {val}%")
+        return {'status': 'ok', 'motor': motor, 'potencia': val}
+    except Exception as e:
+        registrar(f"ERRO potência: {e}")
+        return {'status': 'erro', 'msg': str(e)}, 500
+
+# -------------------------------------------------------
+
+@app.route('/log')
+def log():
+    try:
+        with log_lock:
+            return {'log': list(log_comandos)}
+    except Exception as e:
+        return {'status': 'erro', 'msg': str(e)}, 500
 
 def registrar(msg):
     with log_lock:
@@ -113,160 +290,7 @@ threading.Thread(target=ler_serial, daemon=True).start()
 
 # -------------------------------------------------------
 
-class Camera:
-    def __init__(self):
-        self.cam = cv2.VideoCapture(0, cv2.CAP_V4L2)
-        self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-        self.cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
-        self.cam.set(cv2.CAP_PROP_FPS, 10)
-        self.cam.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.frame_raw  = None   # frame sem anotações (para detecção)
-        self.frame_jpeg = None   # frame codificado para stream
-        self.lock = threading.Lock()
-        threading.Thread(target=self._capturar, daemon=True).start()
-
-    def _capturar(self):
-        while True:
-            sucesso, frame = self.cam.read()
-            if sucesso:
-                with self.lock:
-                    self.frame_raw = frame.copy()
-
-                with modo_lock:
-                    auto = modo_auto
-
-                if auto:
-                    frame, _ = detectar(frame)
-
-                _, buffer = cv2.imencode('.jpg', frame,
-                                        [cv2.IMWRITE_JPEG_QUALITY, 50])
-                with self.lock:
-                    self.frame_jpeg = buffer.tobytes()
-            time.sleep(0.05)
-
-    def get_frame(self):
-        with self.lock:
-            return self.frame_jpeg
-
-    def get_raw(self):
-        with self.lock:
-            return self.frame_raw.copy() if self.frame_raw is not None else None
-
-camera = Camera()
-
-# Loop autônomo — roda em background quando modo_auto=True
-def loop_autonomo():
-    ultimo_cmd = None
-    while True:
-        with modo_lock:
-            auto = modo_auto
-        if auto:
-            frame = camera.get_raw()
-            if frame is not None:
-                _, objectInfo = detectar(frame.copy())
-                cmd = decidir_acao(objectInfo)
-                if cmd != ultimo_cmd:
-                    if cmd:
-                        try:
-                            ser.write((cmd + '\n').encode())
-                            registrar(f"[AUTO] Enviado: '{cmd}'")
-                        except Exception as e:
-                            registrar(f"[AUTO] ERRO serial: {e}")
-                    else:
-                        try:
-                            ser.write(('s\n').encode())
-                            registrar("[AUTO] Nenhum alvo — parando")
-                        except Exception:
-                            pass
-                    ultimo_cmd = cmd
-        else:
-            ultimo_cmd = None  # reseta ao sair do modo auto
-        time.sleep(0.15)
-
-threading.Thread(target=loop_autonomo, daemon=True).start()
-
-# -------------------------------------------------------
-
-def gerar_frames():
-    while True:
-        frame = camera.get_frame()
-        if frame:
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' +
-                   frame + b'\r\n')
-        time.sleep(0.05)
-
-# -------------------------------------------------------
-
-@app.route('/')
-def index():
-    return 
-
-@app.route('/set_modo')
-def set_modo():
-    global modo_auto
-    val = request.args.get('auto', '0')
-    with modo_lock:
-        modo_auto = (val == '1')
-        estado = modo_auto
-    registrar(f"Modo alterado para: {'AUTOMÁTICO' if estado else 'MANUAL'}")
-    if not estado:
-        # Para os motores ao sair do modo automático
-        try:
-            ser.write(('s\n').encode())
-        except Exception:
-            pass
-    return {'modo_auto': estado}
-
-@app.route('/stream')
-def stream():
-    return Response(gerar_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/move')
-def move():
-    with modo_lock:
-        auto = modo_auto
-    if auto:
-        return {'status': 'erro', 'msg': 'em modo automático'}, 403
-    cmd = request.args.get('cmd', '')
-    if cmd in ['w', 'a', 's', 'd', 'q', 'e']:
-        try:
-            ser.write((cmd + '\n').encode())
-            registrar(f"Enviado: '{cmd}'")
-            return {'status': 'enviado', 'cmd': cmd}
-        except Exception as e:
-            registrar(f"ERRO serial: {e}")
-            return {'status': 'erro', 'msg': str(e)}, 500
-    return {'status': 'erro', 'msg': 'comando inválido'}, 400
-
-@app.route('/power')
-def power():
-    global potencia1, potencia2
-    try:
-        motor = int(request.args.get('motor', 0))
-        val   = int(request.args.get('val', 30))
-        val   = max(0, min(100, val))
-        if motor not in [1, 2]:
-            return {'status': 'erro', 'msg': 'motor inválido'}, 400
-        if motor == 1:
-            potencia1 = val
-        else:
-            potencia2 = val
-        msg = f"P{motor}{val:03d}\n"
-        ser.write(msg.encode())
-        registrar(f"M{motor} → {val}%")
-        return {'status': 'ok', 'motor': motor, 'potencia': val}
-    except Exception as e:
-        registrar(f"ERRO potência: {e}")
-        return {'status': 'erro', 'msg': str(e)}, 500
-
-@app.route('/log')
-def log():
-    try:
-        with log_lock:
-            return {'log': list(log_comandos)}
-    except Exception as e:
-        return {'status': 'erro', 'msg': str(e)}, 500
-
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False, threaded=True)
+
+    
