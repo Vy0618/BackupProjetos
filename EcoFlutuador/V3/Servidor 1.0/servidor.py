@@ -6,7 +6,12 @@ import time
 
 # -------------------------------------------------------
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder='.',
+    static_folder='.',
+    static_url_path='/static'
+)
 
 ser = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
 

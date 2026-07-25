@@ -4,9 +4,7 @@
 <head>
     <title>EcoFlutuador</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="style.css">
-    <script src="script.js">  </script>
-    <py-script src="servidor.py"></py-script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 
 <body>
@@ -54,6 +52,7 @@
     </div>
 
     <div id="log">Aguardando comandos...</div>
+     <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 
 </html>
